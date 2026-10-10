@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "npm run dev --workspace apps/api",
     "dev:web": "npm run dev --workspace apps/web",
+    "db:push": "npm run db:push --workspace apps/api",
     "lint": "biome check --write",
     "format": "biome format --write",
     "typecheck": "npm run typecheck --workspaces --if-present",
