@@ -9,16 +9,16 @@ let db: Db | undefined;
 let client: DatabaseSync | undefined;
 
 export function getDb(): Db {
-    if(db === undefined) {
-        client = new DatabaseSync(resolveDbPath());
-        client.exec("PRAGMA journal_mode = WAL;");
-        db = drizzle({client});
-    }
-    return db;
+  if (db === undefined) {
+    client = new DatabaseSync(resolveDbPath());
+    client.exec("PRAGMA journal_mode = WAL;");
+    db = drizzle({ client });
+  }
+  return db;
 }
 
 export function closeDb(): void {
-    client?.close();
-    client = undefined;
-    db = undefined;
+  client?.close();
+  client = undefined;
+  db = undefined;
 }

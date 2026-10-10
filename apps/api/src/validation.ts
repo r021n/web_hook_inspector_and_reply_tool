@@ -42,22 +42,22 @@ export function paramValidator<T extends z.ZodType>(schema: T) {
 }
 
 export const requestSummarySchema = z.object({
-    id: z.uuid(),
-    method: z.string(),
-    path: z.string(),
-    query: z.string(),
-    contentType: z.string().nullable(),
-    bodySize: z.number().int(),
-    receivedAt: z.number().int(),
-})
+  id: z.uuid(),
+  method: z.string(),
+  path: z.string(),
+  query: z.string(),
+  contentType: z.string().nullable(),
+  bodySize: z.number().int(),
+  receivedAt: z.number().int(),
+});
 
 export type RequestSummary = z.infer<typeof requestSummarySchema>;
 
 export const requestDetailSchema = requestSummarySchema.extend({
-    token: z.string(),
-    headers: z.record(z.string(), z.string()),
-    body: z.string().nullable(),
-    bodyEncoding: z.enum(["text", "base64"])
-})
+  token: z.string(),
+  headers: z.record(z.string(), z.string()),
+  body: z.string().nullable(),
+  bodyEncoding: z.enum(["text", "base64"]),
+});
 
-export type RequestDetail = z.infer<typeof requestDetailSchema>
+export type RequestDetail = z.infer<typeof requestDetailSchema>;

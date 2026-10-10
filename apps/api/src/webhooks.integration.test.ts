@@ -60,10 +60,13 @@ async function getJson(path: string): Promise<unknown> {
   return res.json();
 }
 
-async function ingest(token: string, init: RequestInit = {},): Promise<{ok: boolean; id: string;}> {
-    const res = await fetch(`${base}/in/${token}`, init);
-    expect(res.status).toBe(200);
-    return res.json() as Promise<{ ok: boolean; id: string }>;
+async function ingest(
+  token: string,
+  init: RequestInit = {},
+): Promise<{ ok: boolean; id: string }> {
+  const res = await fetch(`${base}/in/${token}`, init);
+  expect(res.status).toBe(200);
+  return res.json() as Promise<{ ok: boolean; id: string }>;
 }
 
 describe("webhook ingest → list → detail (HTTP asli)", () => {
