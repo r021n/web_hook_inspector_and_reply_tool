@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
+import { emitnewWebhook } from "../bus.ts";
 import { Hono } from "hono";
 import { getDb } from "../db/index.ts";
 import { type WebhookRequestRow, webhookRequests } from "../db/schema.ts";
@@ -103,6 +104,17 @@ webhooksRouter.all(
     await getDb()
       .insert(webhookRequests)
       .values({ ...captured, headers: JSON.stringify(captured.headers) });
+
+    emitnewWebhook({
+      id: captured.id,
+      token: captured.token,
+      method: captured.method,
+      path: captured.path,
+      query: captured.query,
+      contentType: captured.contentType,
+      bodySize: captured.bodySize,
+      receivedAt: captured.receivedAt,
+    });
 
     return c.json({ ok: true, id: captured.id });
   },

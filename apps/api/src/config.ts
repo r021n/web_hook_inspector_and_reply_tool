@@ -13,3 +13,19 @@ export function resolvePort(env: Record<string, string | undefined>): number {
 }
 
 export const PORT = resolvePort(process.env);
+
+export const DEFAULT_HEARTBEAT_MS = 15_000;
+
+export function resolveHeartBeatMs(
+  env: Record<string, string | undefined>,
+): number {
+  const raw = env.STREAM_HEARTBEAT_MS;
+  if (raw === undefined || raw === "") {
+    return DEFAULT_HEARTBEAT_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 1) {
+    return DEFAULT_HEARTBEAT_MS;
+  }
+  return parsed;
+}
