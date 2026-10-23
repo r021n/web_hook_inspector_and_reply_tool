@@ -1,191 +1,111 @@
-# Deskripsi Project
+# Real-Time Webhook Relay & Inspector (DevTool)
 
-**Webhook Inspector & Replay Tool** — alat dev lokal untuk menangkap, menginspeksi, dan me-replay HTTP request secara real-time. Berjalan sepenuhnya di localhost tanpa Redis, tanpa Edge Runtime, dan tanpa auth. Request masuk ke endpoint unik, disimpan ke SQLite via Drizzle ORM, di-push ke dashboard melalui SSE, lalu user dapat menginspeksi detail dan me-replay ke target URL.
+## 1. Overview & Konsep
+Mini Ngrok / Webhook Tester berbasis web (mirip *Webhook.site* atau *RequestBin*) untuk menangkap (*catch*), menginspeksi (*inspect*) payload secara *real-time*, dan mengirim ulang (*replay*) HTTP request secara instan ke endpoint target.
 
-**Alur utama:** Request masuk → disimpan ke SQLite → SSE push ke dashboard → inspeksi detail (headers, body, query, method, timing) → replay request.
-
----
-
-# Tech Stack (Riset 2026)
-
-| Layer            | Teknologi                         | Catatan Kritis                                                                                                         |
-| ---------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Runtime          | **Node.js 24**                    | `node:sqlite` Stability 1.2 — Release Candidate, sudah aman dipakai                                                    |
-| API Framework    | **Hono 4.12.4+**                  | Wajib ≥4.12.4 — patch CVE-2026-29085 (SSE Control Field Injection)                                                     |
-| Node Adapter     | **@hono/node-server v2**          | Throughput 2.3x v1; ⚠️ buffer SSE kecil + tambah `Content-Length` → HTTP/2 PROTOCOL_ERROR. Set `X-Accel-Buffering: no` |
-| Database         | **node:sqlite** + **Drizzle ORM** | Drizzle support native driver `drizzle-orm/node-sqlite`                                                                |
-| Frontend         | **React 19 + Vite**               | SPA murni                                                                                                              |
-| Routing          | **TanStack Router v2**            | Reactive core baru berbasis alien-signals; `key` → `__TSR_key`                                                         |
-| Data Fetching    | **TanStack Query v6**             | ⚠️ `useQuery` single options object; `mutateAsync` dihapus; mutation callbacks (`onSuccess`/`onError`) dihapus         |
-| Styling          | **Tailwind CSS v4**               | Vite plugin `@tailwindcss/vite` — no `tailwind.config.js`, no PostCSS                                                  |
-| UI Components    | **shadcn/ui**                     | Install Tailwind dulu, baru `npx shadcn@latest init`                                                                   |
-| State Management | **Zustand v5**                    | Client state (filter, selected request, modal)                                                                         |
-| Body Viewer      | **Monaco Editor**                 | Pakai `@monaco-editor/react@next` untuk React 19                                                                       |
-| Linter/Formatter | **Biome v2**                      | Satu `biome.json`, ganti ESLint + Prettier. `npx @biomejs/biome init`                                                  |
-| Testing          | **Vitest**                        | Butuh Vite ≥6.4.0 dan Node ≥22.12.0                                                                                    |
-| Validasi         | **Zod**                           | Schema payload webhook                                                                                                 |
-| Package Manager  | **npm**                           | Workspaces via field `workspaces` di root `package.json`                                                               |
-| DevTools         | **TanStack Query DevTools v6**    | Observe queries + mutations                                                                                            |
+* **Tech Focus:** Next.js (App Router), Route Handlers, Edge Runtime, Server-Sent Events (SSE), Upstash Redis.
+* **Tantangan Utama:** Menjaga latensi rendah di Edge dan mengelola koneksi *long-lived streaming* (SSE) tanpa *memory leak*.
 
 ---
 
-# 8 Fase @ 30 Menit
+## 2. Hasil Research & Brainstorming
 
-## Fase 1 — Setup Monorepo, Biome & Backend Skeleton
+### A. Evaluasi Lingkungan & Hardware
+* **Hardware:** Apple M5, 16 GB Unified Memory.
+* **Status Keserasian:** Sangat mumpuni dan efisien untuk menjalankan dev server Next.js, live reload, dan browser devtools secara simultan.
+* **Database / Broker:** Dipilih **Upstash Redis** (Cloud Serverless via `@upstash/redis` REST API).
+  * *Alasan:* Berjalan sempurna di **Edge Runtime** tanpa hambatan TCP connection limit/socket raw.
+  * *Alternatif Lokal:* Colima (Docker) tersedia jika di masa depan diperlukan simulasi offline/container lokal.
 
-**Yang dikerjakan:**
-
-- Inisialisasi npm workspace: root `package.json` dengan field `"workspaces": ["apps/*", "packages/*"]`.
-- Buat `apps/api` (Hono + Node.js), `apps/web` (Vite + React), `packages/shared` (tipe bersama).
-- Install Biome di root: `npx @biomejs/biome init` → `biome.json` untuk seluruh monorepo. Tambahkan script `"lint": "biome check --write ."`, `"format": "biome format --write ."`.
-- Buat Hono app minimal: `GET /health` → `{ ok: true }`, jalankan di port 3000 via `@hono/node-server`.
-- Setup `tsconfig.json` strict mode di masing-masing package.
-
-**Hasil akhir fase:**
-
-- `npm run dev` di root menjalankan API.
-- `curl localhost:3000/health` → `{ ok: true }`.
-- `npm run lint` membersihkan dan memformat semua file dalam <1 detik.
-
----
-
-## Fase 2 — Webhook Ingest + Drizzle ORM + SQLite
-
-**Yang dikerjakan:**
-
-- Install `drizzle-orm` + `drizzle-kit`; definisikan schema di `apps/api/src/db/schema.ts` menggunakan `drizzle-orm/node-sqlite`.
-- Buat `drizzle.config.ts` dengan `dialect: 'sqlite'`; jalankan `npx drizzle-kit push` untuk buat tabel.
-- Buat endpoint `ALL /in/:token` — terima semua method, simpan request ke SQLite via Drizzle (generate `id` dengan `crypto.randomUUID()`).
-- Buat endpoint `GET /hooks/:token` → list 50 request terbaru; `GET /hooks/:token/:id` → detail satu request.
-- Tambahkan Zod schema untuk validasi payload.
-
-**Hasil akhir fase:**
-
-- `curl -X POST localhost:3000/in/test -d '{"foo":"bar"}'` tersimpan.
-- `curl localhost:3000/hooks/test` mengembalikan list berisi request tersebut.
-- Autocomplete penuh di query Drizzle; error TypeScript kalau kolom salah.
+### B. Arsitektur Komponen
+1. **Endpoint Sesi (`/api/catch/[sessionId]`):**
+   * Menerima request HTTP (GET, POST, PUT, DELETE, PATCH).
+   * Menangkap: Method, URL, Headers, Query Params, Raw/JSON Body, Client IP, dan Timestamp.
+   * Menyimpan data riwayat ke Redis (List/Hash) dengan masa kedaluwarsa (TTL 1–24 jam).
+   * Mem-publish notifikasi event ke Redis Pub/Sub channel `session:[sessionId]`.
+2. **Real-time Pipeline (`/api/stream/[sessionId]`):**
+   * Endpoint SSE berbasis standard `ReadableStream` (Edge Runtime).
+   * Membuka koneksi event stream ke browser, mengirimkan payload seketika saat event dipublish.
+3. **Frontend Dashboard UI:**
+   * Split-screen layout:
+     * *Kiri:* Real-time activity feed (daftar request terbaru).
+     * *Kanan:* Tab Inspector (Headers, Query, Formatted Body Viewer) dan panel Replay.
+4. **Replay Engine (`/api/replay`):**
+   * Mengambil request yang tersimpan, mengizinkan user mengedit payload/header/target URL, dan melakukan *dispatch* via `fetch()`.
 
 ---
 
-## Fase 3 — SSE Streaming Endpoint + Vitest Setup
+## 3. Detail Roadmap & Pembagian Fase (~30 Menit per Fase)
 
-**Yang dikerjakan:**
+Setiap fase dirancang bertahap, modular, dan dapat diuji secara mandiri (*standalone*).
 
-- Buat `EventEmitter` sederhana sebagai bus internal (satu instance, export dari module terpisah).
-- Di endpoint ingest (Fase 2), setelah insert sukses, `emit('new-webhook', payload)`.
-- Buat `GET /stream/:token` dengan `streamSSE` dari `hono/streaming`:
-  - Set header `X-Accel-Buffering: no` (wajib untuk @hono/node-server v2).
-  - Forward event ke `stream.writeSSE()`.
-  - Heartbeat setiap 15 detik: `stream.writeSSE({ event: 'ping', data: '' })`.
-  - Cleanup: `stream.onAbort(() => unsubscribe())` + `finally` block.
-- Install Vitest: `npm install -D vitest` di `apps/api`. Buat `vitest.config.ts`. Tulis test pertama dengan `testClient` dari `hono/testing`.
-
-**Hasil akhir fase:**
-
-- Terminal A: `curl -N localhost:3000/stream/test` → tampil SSE event saat webhook ditembak.
-- Stream tetap hidup setelah 30+ detik (heartbeat bekerja).
-- `npm test` menjalankan test SSE pertama dengan sukses.
+### Fase 1: Project Setup & Upstash Integration
+* **Durasi Target:** ~30 Menit
+* **Apa yang Dikerjakan:**
+  1. Inisialisasi project Next.js (App Router, TypeScript, Tailwind CSS, Lucide Icons).
+  2. Install dan konfigurasi client Upstash (`@upstash/redis`).
+  3. Setup environment variables (`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`).
+  4. Buat utility helper untuk Redis connection, data models/schema (TypeScript interfaces untuk `WebhookRequest`), dan generator session UUID.
+* **Deliverables (Kriteria Selesai):**
+  * Project Next.js dapat berjalan via `npm run dev`.
+  * Koneksi Upstash teruji (bisa set/get key sederhana melalui script uji/route test).
+  * Halaman awal mengarahkan user atau meng-generate `sessionId` unik.
 
 ---
 
-## Fase 4 — Frontend Setup, Tailwind v4, shadcn/ui & Dashboard Layout
-
-**Yang dikerjakan:**
-
-- Inisialisasi Vite + React + TypeScript di `apps/web`.
-- Install Tailwind v4: `npm install tailwindcss @tailwindcss/vite`. Tambahkan plugin di `vite.config.ts`; `@import "tailwindcss"` di `index.css`.
-- Install shadcn/ui: `npx shadcn@latest init`, lalu `npx shadcn@latest add button card badge dialog table skeleton toast`.
-- Setup TanStack Router v2 dengan dua route: `/` → redirect `/inspect/local`, `/inspect/$token` → dashboard.
-- Setup `QueryClientProvider` + TanStack Query DevTools v6.
-- Buat hook `useWebhookStream(token)` yang membuka `EventSource` ke `/stream/:token` dan meng-invalidate query TanStack saat event masuk.
-
-**Hasil akhir fase:**
-
-- Buka `localhost:5173/inspect/local` → layout sidebar + panel dengan komponen shadcn.
-- DevTools → Network → EventStream → SSE aktif.
-- Webhook ditembak via curl → sidebar otomatis refetch.
+### Fase 2: Webhook Ingestion Route Handler (`/api/catch/[sessionId]`)
+* **Durasi Target:** ~30 Menit
+* **Apa yang Dikerjakan:**
+  1. Buat Route Handler dinamis di `app/api/catch/[sessionId]/route.ts` dengan konfigurasi `export const runtime = 'edge'`.
+  2. Implementasi parser serbaguna untuk menangkap method HTTP apa pun, headers, query params, dan request body (mendukung JSON, text, atau form-urlencoded).
+  3. Simpan data request ke Upstash Redis (`LPUSH` / Hash dengan TTL 2 jam).
+  4. Publish metadata request ke channel Redis Pub/Sub untuk realtime trigger.
+  5. Kembalikan response cepat `200 OK` `{ "success": true, "id": "..." }` ke pengirim webhook.
+* **Deliverables (Kriteria Selesai):**
+  * Mengirim cURL / Postman ke `http://localhost:3000/api/catch/test-session` berhasil mengembalikan 200 OK.
+  * Payload tersimpan dan terverifikasi di Upstash Redis lengkap dengan timestamp dan headers.
 
 ---
 
-## Fase 5 — Inspector Detail View + Zustand + Monaco Editor
-
-**Yang dikerjakan:**
-
-- Install Zustand + buat `useUIStore` untuk `selectedId`, `filterMethod`, `searchQuery`.
-- Buat `RequestList` (sidebar): method badge, path, waktu relatif. Klik → `select(id)` Zustand.
-- Buat `RequestDetail`: method + path + timestamp, tabel headers, tabel query params.
-- Install `@monaco-editor/react@next` (React 19 compatible). Lazy load via `React.lazy` — bundle Monaco ~3.67 MB, wajib lazy agar initial load cepat.
-- Body viewer: jika `application/json` → Monaco dengan language `json`; jika `text/*` → Monaco `plaintext`; jika binary → placeholder ukuran.
-
-**Hasil akhir fase:**
-
-- Klik request → detail tampil dengan Monaco syntax highlighting.
-- State UI dikelola Zustand; server state tetap TanStack Query.
-- Filter method berfungsi via Zustand.
+### Fase 3: Real-Time SSE Streaming Handler (`/api/stream/[sessionId]`)
+* **Durasi Target:** ~30 Menit
+* **Apa yang Dikerjakan:**
+  1. Buat Route Handler SSE di `app/api/stream/[sessionId]/route.ts`.
+  2. Implementasikan `ReadableStream` dengan header `Content-Type: text/event-stream`, `Cache-Control: no-cache`, dan `Connection: keep-alive`.
+  3. Hubungkan stream dengan subscriber Upstash atau mekanisme periodic short-poll/pubsub listener ke session key.
+  4. Tambahkan mekanisme heartbeat / ping setiap 15 detik agar koneksi tidak diputus oleh proxy/browser.
+  5. Tangani gracefully disconnect (clean up listener saat tab/koneksi browser ditutup) untuk mencegah memory leak.
+* **Deliverables (Kriteria Selesai):**
+  * Akses endpoint via browser/cURL (`curl -N http://localhost:3000/api/stream/test-session`) menjaga koneksi tetap terbuka.
+  * Setiap ada webhook baru dikirim ke Fase 2, event data langsung terdorong ke stream terminal/browser secara seketika.
 
 ---
 
-## Fase 6 — Replay Functionality
-
-**Yang dikerjakan:**
-
-- Buat `POST /hooks/:token/:id/replay` di Hono:
-  - Ambil request asli dari SQLite.
-  - Rekonstruksi `fetch()` dengan method, headers, body sama.
-  - Kirim ke target URL dari body request (`{ targetUrl: string }`).
-  - Kembalikan response target (status, headers, body).
-- Frontend: form replay di panel detail menggunakan shadcn `Dialog`.
-- Gunakan `useMutation` — ⚠️ di v6, `onSuccess`/`onError` callback di mutation dihapus; handle di `mutationFn` atau di komponen dengan `useQueryClient()`.
-- Simpan hasil replay sebagai entry baru dengan flag `is_replay: 1`.
-- Tampilkan response target (status, headers, body) di bawah form.
-
-**Hasil akhir fase:**
-
-- Klik request → isi URL target → Replay → response target muncul di UI.
-- Request hasil replay muncul di sidebar.
-- Error handling: target URL invalid → pesan error jelas.
+### Fase 4: Inspector Web Dashboard & UI Components
+* **Durasi Target:** ~30 Menit
+* **Apa yang Dikerjakan:**
+  1. Bangun halaman dashboard `app/[sessionId]/page.tsx`.
+  2. Buat custom hook `useWebhookStream(sessionId)` menggunakan `EventSource` Web API.
+  3. Buat komponen **Header / Copy Webhook URL** dengan tombol copy cepat.
+  4. Buat komponen **Request Feed List** (sidebar) yang menampilkan badge method (`POST`, `GET`), status, path, dan timestamp.
+  5. Buat komponen **Detail Inspector Panel**:
+     * Tab Headers (tabel key-value).
+     * Tab Query Parameters.
+     * Tab Body (JSON formatter/syntax viewer dengan tombol *Copy Payload*).
+* **Deliverables (Kriteria Selesai):**
+  * UI tampil responsif dan rapi.
+  * Ketika ada request webhook baru masuk via cURL/Postman, item baru langsung muncul di sidebar feed tanpa refresh halaman, dan payload bisa diklik serta diinspeksi.
 
 ---
 
-## Fase 7 — Polish UI + Edge Cases
-
-**Yang dikerjakan:**
-
-- Empty states: "Belum ada request" di sidebar, "Pilih request" di panel detail.
-- Loading states: shadcn `Skeleton` di sidebar.
-- Error states: pesan jika API down.
-- Auto-scroll sidebar ke atas saat request baru masuk via SSE.
-- Badge "new" / highlight singkat pada request baru.
-- Copy button: raw body, headers JSON, curl command (shadcn `Toast` untuk notifikasi).
-- Filter by method + search via Zustand.
-- Hapus request individual + "Clear all".
-
-**Hasil akhir fase:**
-
-- UI responsif, tidak ada state kosong membingungkan.
-- Copy button berfungsi; filter + clear all berfungsi.
-- Toast muncul saat replay sukses/gagal.
-
----
-
-## Fase 8 — Testing, Dokumentasi & Finalisasi
-
-**Yang dikerjakan:**
-
-- Tulis minimal 3 integration test dengan Vitest:
-  1. Ingest → tersimpan → list mengembalikannya.
-  2. SSE mengirim event saat request baru masuk.
-  3. Replay mengirim request ke target yang benar (mock `fetch`).
-- Tulis `README.md`: cara install, cara run, cara pakai, endpoint list.
-- `npm run build` untuk frontend; pastikan build sukses tanpa error TypeScript.
-- Cek memory leak: buka SSE, tutup tab, log `process.memoryUsage()` — pastikan tidak membengkak.
-- Jalankan `biome check` sebagai gate akhir.
-
-**Hasil akhir fase:**
-
-- `npm test` menjalankan seluruh test suite dalam <5 detik.
-- Build frontend sukses.
-- README lengkap dan bisa diikuti.
-- Alur end-to-end terverifikasi: fresh clone → install → dev → tembak webhook → inspeksi → replay.
-
----
+### Fase 5: Request Replay & Resend Engine
+* **Durasi Target:** ~30 Menit
+* **Apa yang Dikerjakan:**
+  1. Buat Route Handler `/api/replay` (atau Server Action) yang menerima target URL, HTTP method, custom headers, dan body.
+  2. Buat modal / panel form **"Replay Request"** di UI:
+     * Input field *Target URL* (misal: `http://localhost:8000/webhook-receiver`).
+     * Editable payload area (memungkinkan modifikasi isi JSON sebelum dikirim).
+     * Tombol *Send Replay*.
+  3. Tampilkan hasil replay: status code balasan target (`200`, `500`, dll.), latency/durasi request, dan response body balasan dari target.
+* **Deliverables (Kriteria Selesai):**
+  * User dapat memilih salah satu webhook yang telah ditangkap, mengedit URL/body, menekan tombol "Replay", dan melihat response sukses dari server target langsung di UI.
