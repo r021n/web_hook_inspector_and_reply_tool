@@ -2,6 +2,9 @@ import Link from "next/link";
 import { ArrowLeft, Radio, Terminal, CheckCircle2 } from "lucide-react";
 import { isValidSessionId } from "@/lib/session";
 
+// Route ini memang butuh sessionId dari URL dan harus dirender per-request.
+export const instant = false;
+
 interface SessionPageProps {
   params: Promise<{
     sessionId: string;
