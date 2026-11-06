@@ -1,5 +1,5 @@
 import type { WebhookRequest } from "@/types/webhook";
-import { getRedisClient } from "@/lib/redis";
+import { getRedisClient, isRedisConfigured } from "@/lib/redis";
 
 const REQUEST_TTL_SECONDS = 2 * 60 * 60;
 const MAX_REQUESTS_PER_SESSION = 100;
@@ -42,6 +42,31 @@ export async function buildWebhookRequest(
     clientIp: getClientIp(request.headers),
     timestamp: Date.now(),
   };
+}
+
+export async function getWebhookRequests(
+  sessionId: string,
+): Promise<WebhookRequest[]> {
+  if (!isRedisConfigured) return [];
+
+  try {
+    const items = await getRedisClient().lrange<WebhookRequest | string>(
+      requestsKey(sessionId),
+      0,
+      MAX_REQUESTS_PER_SESSION - 1,
+    );
+
+    return items.flatMap((item) => {
+      if (typeof item !== "string") return [item];
+      try {
+        return [JSON.parse(item) as WebhookRequest];
+      } catch {
+        return [];
+      }
+    });
+  } catch {
+    return [];
+  }
 }
 
 export async function saveWebhookRequest(
