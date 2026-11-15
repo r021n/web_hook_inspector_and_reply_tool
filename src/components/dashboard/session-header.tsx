@@ -54,7 +54,7 @@ export function SessionHeader({ sessionId, status }: SessionHeaderProps) {
           <span className="hidden sm:inline">Kembali</span>
         </Link>
         <div className="h-4 w-px bg-slate-800 shrink-0" />
-        <div>
+        <div className="flex items-center gap-2 min-2">
           <StatusIcon
             className={`w-4 h-4 shrink-0 ${
               status === "live" ? "text-emerald-400 animate-pulse" : ""
@@ -86,7 +86,7 @@ export function SessionHeader({ sessionId, status }: SessionHeaderProps) {
         <span
           className={`flex items-center gap-1.5 text-xs border px-2.5 py-1 rounded-full ${statusStyle.className}`}
         >
-          <StatusIcon className="w-3.5 h-3.5"/>
+          <StatusIcon className="w-3.5 h-3.5" />
           {statusStyle.label}
         </span>
       </div>

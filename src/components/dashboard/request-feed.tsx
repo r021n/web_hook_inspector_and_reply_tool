@@ -31,7 +31,7 @@ export function RequestFeed({
           <div className="h-full min-h-48 flex flex-col items-center justify-center text-center p-6">
             <Inbox className="w-8 h-8 text-slate-600 mb-3" />
             <p className="text-xs text-slate-400">
-              Menunggu requests webhook masuk...
+              Menunggu request webhook masuk...
             </p>
           </div>
         ) : (

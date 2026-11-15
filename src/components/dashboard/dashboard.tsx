@@ -21,9 +21,9 @@ export function Dashboard({ sessionId, initialRequests }: DashboardProps) {
     null;
 
   return (
-    <div>
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       <SessionHeader sessionId={sessionId} status={status} />
-      <main>
+      <main className="flex-1 grid grid-cols-1 md:grid-cols-[340px_1fr] min-h-0">
         <RequestFeed
           requests={requests}
           selectedId={selected?.id ?? null}
